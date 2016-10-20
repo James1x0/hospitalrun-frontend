@@ -1,10 +1,13 @@
 import AuthenticatedRouteMixin from 'ember-simple-auth/mixins/authenticated-route-mixin';
 import Ember from 'ember';
 import UserSession from 'hospitalrun/mixins/user-session';
+
+const { Route, RSVP, isEmpty, computed } = Ember;
+
 /**
  * Abstract route for top level modules (eg patients, inventory, users)
  */
-export default Ember.Route.extend(UserSession, AuthenticatedRouteMixin, {
+export default Route.extend(UserSession, AuthenticatedRouteMixin, {
   addCapability: null,
   additionalModels: null,
   allowSearch: true,
@@ -14,41 +17,36 @@ export default Ember.Route.extend(UserSession, AuthenticatedRouteMixin, {
   sectionTitle: null,
   subActions: null,
 
-  editPath: function() {
-    let module = this.get('moduleName');
-    return `${module}.edit`;
-  }.property('moduleName'),
+  editPath: computed('moduleName', function () {
+    return `${this.get('moduleName')}.edit`;
+  }),
 
-  deletePath: function() {
-    let module = this.get('moduleName');
-    return `${module}.delete`;
-  }.property('moduleName'),
+  deletePath: computed('moduleName', function () {
+    return `${this.get('moduleName')}.delete`;
+  }),
 
-  newButtonAction: function() {
-    if (this.currentUserCan(this.get('addCapability'))) {
-      return 'newItem';
-    } else {
-      return null;
-    }
-  }.property(),
+  newButtonAction: computed('addCapability', function () {
+    return this.currentUserCan(this.get('addCapability')) ? 'newItem' : null;
+  }),
 
-  searchRoute: function() {
-    let module = this.get('moduleName');
-    return `/${module}/search`;
-  }.property('moduleName'),
+  searchRoute: computed('moduleName', function () {
+    return `/${this.get('moduleName')}/search`;
+  }),
 
   actions: {
-    allItems: function() {
+    allItems () {
       this.transitionTo(`${this.get('moduleName')}.index`);
     },
-    deleteItem: function(item) {
-      let deletePath = this.get('deletePath');
-      this.send('openModal', deletePath, item);
+
+    deleteItem (item) {
+      this.send('openModal', this.get('deletePath'), item);
     },
-    editItem: function(item) {
+
+    editItem (item) {
       this.transitionTo(this.get('editPath'), item);
     },
-    newItem: function() {
+
+    newItem () {
       if (this.currentUserCan(this.get('addCapability'))) {
         this.transitionTo(this.get('editPath'), 'new');
       }
@@ -62,7 +60,7 @@ export default Ember.Route.extend(UserSession, AuthenticatedRouteMixin, {
      * - newButtonText - The text to display for the "new" button.
      * - newButtonAction - The action to fire for the "new" button.
      */
-    setSectionHeader: function(details) {
+    setSectionHeader (details) {
       let currentController = this.controllerFor(this.get('moduleName'));
       currentController.setProperties(details);
     }
@@ -72,13 +70,14 @@ export default Ember.Route.extend(UserSession, AuthenticatedRouteMixin, {
   /**
    * Make sure the user has permissions to the module; if not reroute to index.
    */
-  beforeModel: function(transition) {
+  beforeModel (transition) {
     let moduleName = this.get('moduleName');
-    if (this.currentUserCan(moduleName)) {
+
+    if ( this.currentUserCan(moduleName) ) {
       return this._super(transition);
     } else {
       this.transitionTo('index');
-      return Ember.RSVP.reject('Not available');
+      return RSVP.reject('Not available');
     }
   },
 
@@ -87,55 +86,55 @@ export default Ember.Route.extend(UserSession, AuthenticatedRouteMixin, {
    * @return a promise that will resolved to a generated id;default is null which means that an
    * id will be automatically generated via Ember data.
    */
-  generateId: function() {
-    return Ember.RSVP.resolve(null);
+  generateId () {
+    return RSVP.resolve(null);
   },
 
-  model: function() {
-    if (!Ember.isEmpty(this.additionalModels)) {
-      return new Ember.RSVP.Promise(function(resolve, reject) {
-        let promises = this.additionalModels.map(function(modelMap) {
-          if (modelMap.findArgs.length === 1) {
-            return this.store.findAll.apply(this.store, modelMap.findArgs);
-          } else {
-            return this.store.find.apply(this.store, modelMap.findArgs);
+  model () {
+    let additionalModels = this.additionalModels;
+
+    if ( !isEmpty(additionalModels) ) {
+      return RSVP.map(additionalModels, modelMap => {
+        let findArgs = modelMap.findArgs,
+            storeMethod = findArgs.length === 1 ? 'findAll' : 'find';
+
+        return this.store[storeMethod].apply(this.store, findArgs)
+        .then(item => this.set(modelMap.name, item))
+        .catch(err => {
+          if ( err ) {
+            throw err;
           }
-        }.bind(this));
-        Ember.RSVP.allSettled(promises, `All additional Models for ${this.get('moduleName')}`).then(function(array) {
-          array.forEach(function(item, index) {
-            if (item.state === 'fulfilled') {
-              this.set(this.additionalModels[index].name, item.value);
-            }
-          }.bind(this));
-          resolve();
-        }.bind(this), reject);
-      }.bind(this), `Additional Models for ${this.get('moduleName')}`);
+        });
+      }, `All additional Models for ${this.get('moduleName')}`);
     } else {
-      return Ember.RSVP.resolve();
+      return RSVP.resolve();
     }
   },
 
-  renderTemplate: function() {
+  renderTemplate () {
     this.render('section');
   },
 
-  setupController: function(controller, model) {
-    let navigationController = this.controllerFor('navigation');
-    if (this.get('allowSearch') === true) {
-      navigationController.set('allowSearch', true);
-      navigationController.set('searchRoute', this.get('searchRoute'));
+  setupController ( controller ) {
+    let navigationController = this.controllerFor('navigation'),
+        currentController = this.controllerFor(this.get('moduleName')),
+        props = [ 'additionalButtons', 'currentScreenTitle', 'newButtonAction', 'newButtonText', 'sectionTitle', 'subActions' ];
+
+    if ( this.get('allowSearch') === true ) {
+      navigationController.setProperties({
+        allowSearch: true,
+        searchRoute: this.get('searchRoute')
+      });
     } else {
       navigationController.set('allowSearch', false);
     }
-    let currentController = this.controllerFor(this.get('moduleName'));
-    let propsToSet = this.getProperties('additionalButtons', 'currentScreenTitle', 'newButtonAction', 'newButtonText', 'sectionTitle', 'subActions');
-    currentController.setProperties(propsToSet);
-    if (!Ember.isEmpty(this.additionalModels)) {
-      this.additionalModels.forEach(function(item) {
-        controller.set(item.name, this.get(item.name));
-      }.bind(this));
-    }
-    this._super(controller, model);
-  }
 
+    currentController.setProperties(this.getProperties(props));
+
+    if ( !isEmpty(this.additionalModels) ) {
+      this.additionalModels.forEach(item => controller.set(item.name, this.get(item.name)));
+    }
+
+    this._super(...arguments);
+  }
 });
